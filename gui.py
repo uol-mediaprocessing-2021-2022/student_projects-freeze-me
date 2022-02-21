@@ -5,14 +5,15 @@ from multiprocessing.sharedctypes import Value
 from tkinter import *
 import tkinter
 from tkinter import filedialog
+from tkinter import ttk
 from turtle import bgcolor, color, window_height, window_width
 import urllib.request
 import cv2
 from cv2 import detail_DpSeamFinder
+from cv2 import resize
 import numpy as np
 from random import random as rand
 from PIL import ImageTk,Image, ImageEnhance
-
 
 #url = 'https://previews.customer.envatousercontent.com/h264-video-previews/0888dd36-1a5b-4e5b-9fbf-e7bca069d213/16602591.mp4'
 #url2 = 'https://media.istockphoto.com/videos/male-dancer-in-studio-shows-ballerina-spin-video-id929138872'
@@ -25,25 +26,82 @@ def createFile(str):
     file = 'test2_video.mp4'
     urllib.request.urlretrieve(str, file)
 
-def backgroundSubtraction():
-    global avg_img
-    global img
-    global file
-    stream = cv2.VideoCapture(file)
-    _, firstframe = stream.read()
-    frame_count = int(stream.get(cv2.CAP_PROP_FRAME_COUNT))
-    images2 = []
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(3,3))
-    fgbg = cv2.bgsegm.createBackgroundSubtractorMOG()
-    for i in range(frame_count-1):
-        _, frame = stream.read()
-        fgmask = fgbg.apply(frame)
-        rgba = cv2.cvtColor(frame, cv2.COLOR_RGB2BGRA)
-        rgba[:, :, 3] = fgmask
-        images2.append(rgba)
-    avg_img = np.mean(images2, axis=0)
+def average_images(images, opacity):
+    avg_img = np.ma.average(images, axis=0)
     avg_img = avg_img.astype(np.uint8)
-    img = ImageTk.PhotoImage(Image.fromarray(avg_img), master=fenster)
+    avg_img_bgra = cv2.cvtColor(avg_img, cv2.COLOR_BGR2BGRA)
+    alpha_channel = avg_img_bgra[:, :, 3]
+    alpha_channel[np.all(avg_img_bgra[:, :, 0:3] == (0, 0, 0), 2)] = 0
+    avg_img_bgra = avg_img_bgra.astype(np.float64)
+    avg_img_bgra[:, :, 3] *= opacity
+    avg_img_bgra = avg_img_bgra.astype(np.uint8)
+
+    # final_img = cv.add(avg_img_bgra, cv.cvtColor(firstframe, cv.COLOR_RGB2BGRA))
+    return avg_img_bgra
+
+def background_substraction(stream, noise_reduction=False):
+    ret, frame = stream.read()
+    images = []
+    fgbg = cv2.createBackgroundSubtractorKNN()
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    while ret:
+        fgmask = fgbg.apply(frame)
+        if noise_reduction:
+            fgmask = cv2.morphologyEx(fgmask, cv2.MORPH_OPEN, kernel)
+        testcolor = cv2.bitwise_and(frame, cv2.cvtColor(fgmask, cv2.COLOR_GRAY2RGB))
+        masked = np.ma.masked_equal(testcolor, 0)
+        images.append(masked)
+        ret, frame = stream.read()
+    return images
+
+def optical_flow(stream, int_threshold=150, noise_reduction=False):
+    ret, frame1 = stream.read()
+    prvs = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)
+    hsv = np.zeros_like(frame1)
+    hsv[..., 1] = 255
+    images = []
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    while (1):
+        ret, frame2 = stream.read()
+        if not ret:
+            break
+        next = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
+        flow = cv2.calcOpticalFlowFarneback(prvs, next, None, 0.5, 3, 15, 3, 5, 1.2, 0)
+        mag, ang = cv2.cartToPolar(flow[..., 0], flow[..., 1])
+        hsv[..., 0] = ang * 180 / np.pi / 2
+        hsv[..., 2] = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)
+        intensity = hsv[:, :, 2]
+        intensity_mask = (np.logical_not(intensity < int_threshold) * 255).astype(np.uint8)
+        mask = np.dstack((intensity_mask, intensity_mask, intensity_mask))
+        if noise_reduction:
+            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        masked_img = cv2.bitwise_and(frame2, mask)
+        masked = np.ma.masked_equal(masked_img, 0)
+        images.append(masked)
+        prvs = next
+    return images
+
+def video_to_freeze_picture(mode, blur_motion=False, opacity=0.5, noise_reduction=False):
+    global img
+    stream = cv2.VideoCapture(file)
+    if mode.lower() == 'bgs':
+        images = background_substraction(stream)
+    elif mode.lower() == 'of':
+        images = optical_flow(stream, noise_reduction=noise_reduction)
+    elif mode.lower() == 'both':
+        print("Not implemented yet")
+        quit()
+    else:
+        print("No valid mode provided")
+        quit()
+    avg_image = average_images(images, opacity=opacity)
+    if blur_motion:
+        avg_image = cv2.blur(avg_image,(5,5))
+    stream.set(cv2.CAP_PROP_POS_FRAMES,0)
+    ret, img1 = stream.read()
+    final_img = cv2.add(avg_image, cv2.cvtColor(img1, cv2.COLOR_BGR2BGRA))
+    final_img = cv2.resize(final_img, (960, 540))
+    img = ImageTk.PhotoImage(Image.fromarray(final_img), master=fenster)
     label.image = img
     label.config(image=img)
     global bild
@@ -61,7 +119,7 @@ def button_action():
     elif(url_text == "" and file != ""):
         if(file.lower().endswith('.mp4')):
             url_fehler_label.config(text="")
-            backgroundSubtraction()
+            video_to_freeze_picture('bgs')
             createOptions()
             fenster.update()
         else: 
@@ -72,7 +130,7 @@ def button_action():
 
     else:
         createFile(video_url.get())
-        backgroundSubtraction()
+        video_to_freeze_picture('bgs')
         createOptions()
         fenster.update()
 
@@ -150,11 +208,10 @@ def reset():
     img = ImageTk.PhotoImage(Image.fromarray(avg_img), master=fenster)
     label.image = img
     label.config(image=img)
-    
 
 fenster = Tk()
 fenster.title("Freeze Me!")
-fenster.geometry("800x800")
+fenster.geometry("1200x1000")
 global bild
 bild=False
 video_url_label = Label(fenster, text="Bitte gib hier die URL eines Videos ein: ")
@@ -164,14 +221,10 @@ video_url = Entry(fenster, bd=5, width=40)
 #video_url.grid(row=0, column=1)
 video_url.pack()
 
-
-
-
 upload_video_label = Label(fenster, text="Oder wähle eine Videodatei aus.")
 upload_video_label.pack()
 upload_button = Button(fenster, text="Öffnen", command=openFile)
 upload_button.pack()
-
 
 url_button = Button(fenster, text="Bestätigen", command=button_action)
 #url_button.grid(row=1, column=1)
@@ -180,7 +233,6 @@ url_button.pack()
 menuleiste = Menu(fenster)
 menuleiste.add_command(label="Exit", command=fenster.quit)
 fenster.config(menu=menuleiste)
-
 
 url_fehler_label = Label(fenster)
 #url_fehler_label.grid(row=2, column=0)
