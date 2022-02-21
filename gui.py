@@ -96,12 +96,15 @@ def video_to_freeze_picture(mode, blur_motion=False, opacity=0.5, noise_reductio
         quit()
     avg_image = average_images(images, opacity=opacity)
     if blur_motion:
-        avg_image = cv2.blur(avg_image,(5,5))
+        avg_image = cv2.blur(avg_image,(3,3))
     stream.set(cv2.CAP_PROP_POS_FRAMES,0)
-    ret, img1 = stream.read()
-    final_img = cv2.add(avg_image, cv2.cvtColor(img1, cv2.COLOR_BGR2BGRA))
+    ret, img = stream.read()
+    avg_img_to_gray = cv2.cvtColor(avg_image, cv2.COLOR_BGR2GRAY)
+    motion_mask_inv = (np.logical_not(avg_img_to_gray > 1) * 255).astype(np.uint8)
+    firstframe_masked = cv2.bitwise_and(img, img, mask=motion_mask_inv)
+    final_img = cv2.add(avg_image, cv2.cvtColor(firstframe_masked, cv2.COLOR_BGR2BGRA))
     final_img = cv2.resize(final_img, (960, 540))
-    img = ImageTk.PhotoImage(Image.fromarray(final_img), master=fenster)
+    img = ImageTk.PhotoImage(Image.fromarray(cv2.cvtColor(final_img, cv2.COLOR_BGRA2RGBA)), master=fenster)
     label.image = img
     label.config(image=img)
     global bild
