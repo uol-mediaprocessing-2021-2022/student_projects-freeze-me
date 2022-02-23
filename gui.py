@@ -122,7 +122,7 @@ def button_action():
     elif(url_text == "" and file != ""):
         if(file.lower().endswith('.mp4')):
             url_fehler_label.config(text="")
-            video_to_freeze_picture('bgs')
+            video_to_freeze_picture('of')
             createOptions()
             fenster.update()
         else: 
@@ -133,7 +133,7 @@ def button_action():
 
     else:
         createFile(video_url.get())
-        video_to_freeze_picture('bgs')
+        video_to_freeze_picture('of')
         createOptions()
         fenster.update()
 
