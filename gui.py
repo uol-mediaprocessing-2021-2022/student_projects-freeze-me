@@ -46,11 +46,11 @@ def background_substraction(stream, noise_reduction=False, limiter=0):
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
     limiter_count = 1
     while ret:
-        if limiter <= limiter_count:
-            limiter_count = 1
+        if limiter_count <= limiter:
+            limiter_count += 1
             ret, frame = stream.read()
             continue
-        limiter_count += 1
+        limiter_count = 1
         fgmask = fgbg.apply(frame)
         if noise_reduction:
             fgmask = cv2.morphologyEx(fgmask, cv2.MORPH_OPEN, kernel)
@@ -72,10 +72,10 @@ def optical_flow(stream, int_threshold=150, noise_reduction=False, limiter=0):
         ret, frame2 = stream.read()
         if not ret:
             break
-        if limiter <= limiter_count:
-            limiter_count = 1
+        if limiter_count <= limiter:
+            limiter_count += 1
             continue
-        limiter_count += 1
+        limiter_count = 1
         next = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
         flow = cv2.calcOpticalFlowFarneback(prvs, next, None, 0.5, 3, 15, 3, 5, 1.2, 0)
         mag, ang = cv2.cartToPolar(flow[..., 0], flow[..., 1])
