@@ -39,12 +39,18 @@ def average_images(images, opacity):
     # final_img = cv.add(avg_img_bgra, cv.cvtColor(firstframe, cv.COLOR_RGB2BGRA))
     return avg_img_bgra
 
-def background_substraction(stream, noise_reduction=False):
+def background_substraction(stream, noise_reduction=False, limiter=0):
     ret, frame = stream.read()
     images = []
     fgbg = cv2.createBackgroundSubtractorKNN()
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    limiter_count = 1
     while ret:
+        if limiter <= limiter_count:
+            limiter_count = 1
+            ret, frame = stream.read()
+            continue
+        limiter_count += 1
         fgmask = fgbg.apply(frame)
         if noise_reduction:
             fgmask = cv2.morphologyEx(fgmask, cv2.MORPH_OPEN, kernel)
@@ -54,17 +60,22 @@ def background_substraction(stream, noise_reduction=False):
         ret, frame = stream.read()
     return images
 
-def optical_flow(stream, int_threshold=150, noise_reduction=False):
+def optical_flow(stream, int_threshold=150, noise_reduction=False, limiter=0):
     ret, frame1 = stream.read()
     prvs = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)
     hsv = np.zeros_like(frame1)
     hsv[..., 1] = 255
     images = []
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    limiter_count = 1
     while (1):
         ret, frame2 = stream.read()
         if not ret:
             break
+        if limiter <= limiter_count:
+            limiter_count = 1
+            continue
+        limiter_count += 1
         next = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
         flow = cv2.calcOpticalFlowFarneback(prvs, next, None, 0.5, 3, 15, 3, 5, 1.2, 0)
         mag, ang = cv2.cartToPolar(flow[..., 0], flow[..., 1])
@@ -81,9 +92,15 @@ def optical_flow(stream, int_threshold=150, noise_reduction=False):
         prvs = next
     return images
 
-def video_to_freeze_picture(mode, blur_motion=False, opacity=0.5, noise_reduction=False):
+def video_to_freeze_picture(mode, blur_motion=False, opacity=0.5, noise_reduction=False, limit=None):
     global img
+    global output
     stream = cv2.VideoCapture(file)
+    max_frames = stream.get(cv2.CAP_PROP_POS_FRAMES)
+    if limit is None:
+        limit_val = max_frames + 3
+    else:
+        limit_val = int(max_frames/(max_frames/limit))
     if mode.lower() == 'bgs':
         images = background_substraction(stream)
     elif mode.lower() == 'of':
@@ -105,6 +122,7 @@ def video_to_freeze_picture(mode, blur_motion=False, opacity=0.5, noise_reductio
     final_img = cv2.add(avg_image, cv2.cvtColor(firstframe_masked, cv2.COLOR_BGR2BGRA))
     final_img = cv2.resize(final_img, (960, 540))
     img = ImageTk.PhotoImage(Image.fromarray(cv2.cvtColor(final_img, cv2.COLOR_BGRA2RGBA)), master=fenster)
+    output = img
     label.image = img
     label.config(image=img)
     global bild
@@ -116,13 +134,17 @@ def openFile():
 
 def button_action():
     global file
+    if(methode_box.get() == "Background Subtraction"):
+        methode = 'bgs'
+    else:
+        methode = 'of'
     url_text = video_url.get()
     if(url_text == "" and file == ""):
         url_fehler_label.config(text="Gib bitte zuerst eine gültige URL ein oder wähle eine Video Datei aus.")
     elif(url_text == "" and file != ""):
         if(file.lower().endswith('.mp4')):
             url_fehler_label.config(text="")
-            video_to_freeze_picture('of')
+            video_to_freeze_picture(methode)
             createOptions()
             fenster.update()
         else: 
@@ -133,7 +155,7 @@ def button_action():
 
     else:
         createFile(video_url.get())
-        video_to_freeze_picture('of')
+        video_to_freeze_picture(methode)
         createOptions()
         fenster.update()
 
@@ -207,8 +229,9 @@ def delete_img():
 
 def reset():
     global img
-    global avg_img
-    img = ImageTk.PhotoImage(Image.fromarray(avg_img), master=fenster)
+    global output
+    img = output
+    #img = ImageTk.PhotoImage(Image.fromarray(output), master=fenster)
     label.image = img
     label.config(image=img)
 
@@ -228,6 +251,12 @@ upload_video_label = Label(fenster, text="Oder wähle eine Videodatei aus.")
 upload_video_label.pack()
 upload_button = Button(fenster, text="Öffnen", command=openFile)
 upload_button.pack()
+
+methode_label = Label(fenster, text="Wähle eine Methode aus.")
+methode_label.pack()
+methode_box = ttk.Combobox(fenster, values=['Background Subtraction', 'Optical Flow'])
+methode_box.current(0)
+methode_box.pack()
 
 url_button = Button(fenster, text="Bestätigen", command=button_action)
 #url_button.grid(row=1, column=1)
